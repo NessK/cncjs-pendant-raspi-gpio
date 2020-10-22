@@ -1,10 +1,5 @@
 #!/usr/bin/env node
-/*
 
-----------  ToDo    ----------
--   Sjekk med Arne ang P1 for nullstilling av akser.
--   Sjekk med Arne hvor han vil koble ledningene sine.
-*/
 
 var fs = require('fs');
 var path = require('path');
