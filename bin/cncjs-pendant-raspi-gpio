@@ -1,4 +1,10 @@
 #!/usr/bin/env node
+/*
+
+----------  ToDo    ----------
+-   Sjekk med Arne ang P1 for nullstilling av akser.
+-   Sjekk med Arne hvor han vil koble ledningene sine.
+*/
 
 var fs = require('fs');
 var path = require('path');
@@ -7,29 +13,40 @@ var serialport = require('serialport');
 var inquirer = require('inquirer');
 var pkg = require('../package.json');
 var serverMain = require('../index');
-
-var util = require('util')
-var exec = require('child_process').exec;
-
 var sleep = require('sleep');
 var now = require("performance-now")
-var gpio = require('onoff').Gpio,
-  led = new gpio(17, 'out'),
-  button = new gpio(4, 'in', 'both');  // Define GPIO pins on Raspberry Pi
 
+
+var gpio = require('onoff').Gpio,
+// LED control  
+  buttonLED = new gpio(18, 'out');
+// Define buttons
+  Feedhold_btn      = new gpio(5, 'in', 'both', {debounceTimeout: 10});
+  ResetX_btn        = new gpio(5, 'in', 'both', {debounceTimeout: 10});
+  ResetY_btn        = new gpio(5, 'in', 'both', {debounceTimeout: 10});
+  ResetZ_btn        = new gpio(5, 'in', 'both', {debounceTimeout: 10});
+  SpindleStart_btn  = new gpio(5, 'in', 'both', {debounceTimeout: 10});
+  SpindleStop_btn   = new gpio(5, 'in', 'both', {debounceTimeout: 10});
+  GoToZero_btn      = new gpio(5, 'in', 'both', {debounceTimeout: 10});
+  FeedrateRes_btn   = new gpio(5, 'in', 'both', {debounceTimeout: 10});
+  FeedrateInc_btn   = new gpio(5, 'in', 'both', {debounceTimeout: 10});
+  FeedrateDec_btn   = new gpio(5, 'in', 'both', {debounceTimeout: 10});
+  FeedrateSelector  = new gpio(5, 'in', 'both', {debounceTimeout: 10});
+
+const FEEDHOLD_LEDBLINK_INTERVAL = 250 // blink period for LED during feed hold
 var options = {};
 
 program
 	.version(pkg.version)
 	.usage('-s <secret> -p <port> [options]')
 	.option('-l, --list', 'list available ports then exit')
-  .option('-s, --secret', 'the secret key stored in the ~/.cncrc file')
+    .option('-s, --secret', 'the secret key stored in the ~/.cncrc file')
 	.option('-p, --port <port>', 'path or name of serial port')
 	.option('-b, --baudrate <baudrate>', 'baud rate (default: 115200)', 115200)
 	.option('--socket-address <address>', 'socket address or hostname (default: localhost)', 'localhost')
 	.option('--socket-port <port>', 'socket port (default: 8000)', 8000)
 	.option('--controller-type <type>', 'controller type: Grbl|Smoothie|TinyG (default: Grbl)', 'Grbl')
-  .option('--access-token-lifetime <lifetime>', 'access token lifetime in seconds or a time span string (default: 30d)', '30d')
+    .option('--access-token-lifetime <lifetime>', 'access token lifetime in seconds or a time span string (default: 30d)', '30d')
 
 program.parse(process.argv);
 
@@ -67,179 +84,227 @@ var store = {
 };
 
 
-// Global Varables
-var button_pressed_time = 0
-var button_released_time = 0
-var button_presses = 0
-var button_hold_fuction = null
-var button_presses_fuction = null
+// Global Variables
 
-// Create Blink Fuction
-function blink(interations, speed) {
-	// Turn ON LED
-	led.writeSync(1);
+var feedHoldTimer=null; // used to blink the LED while feedhold is active
+var feedholdActivated = false; // indicates whether we are currently in feedhold state or not
+var resetXpos = false; // Variables for hold function to ensure only one command is sent pr button push.
+var resetYpos = false; 
+var resetZpos = false; 
+var StopSpindle = false; 
+var SpindleStart = false; 
+var GoToZero = false;
+var FeedrateRes = false;
+var FeedrateInc = false;
+var FeedrateDec = false;
+var FeedrateSelected = false;
+var SpindleSelected = false;
 
-	// Create Timeout Fuction
-	setTimeout(function() {
-		for(var i = 0; i < interations; i++) {
-			// Blink LED
-			sleep.msleep(speed)
-			led.writeSync(0);
-			sleep.msleep(speed)
-			led.writeSync(1);
-		}
-	}, 0);
-};
+// LED blink callback : toggle state
+function uponFeedHoldTimer() {
+	if (buttonLED.readSync() == 1)
+		buttonLED.writeSync(0);
+	else
+		buttonLED.writeSync(1);
+}
+
+// ------------------------------------------------ Called Functions --------------------------------------------
+
+// Feedhold button - Feedhold if not active
+function FeedHoldEnabled() {
+	if (feedholdActivated == false) {
+		socket.emit('write', options.port, "!")
+		console.log("FEED HOLD!");
+		feedHoldTimer = setInterval(uponFeedHoldTimer, FEEDHOLD_LEDBLINK_INTERVAL);
+		feedholdActivated = true;
+	}
+}
+// Feedhold button - Start Cycle if Feedhold is active - "~"
+function FeedHoldDisabled() {
+	if (feedholdActivated == true) {
+		socket.emit('write', options.port, "~")
+		clearInterval(feedHoldTimer);
+		buttonLED.writeSync(0);
+		console.log("RESUME");
+		feedholdActivated = false;
+	}
+}
+// Zero X Axis - G10 L20 P1 X0 - Remove P1, hør med arne
+function ZeroWorkPosXFunc() {
+	if (resetXpos == false) {
+		socket.emit('write', options.port, "G10 L20 P1 X0;\n");
+        console.log("ZeroWorkPosX");
+        resetXpos = true;
+	}
+}
+// Zero Y Axis - G10 L20 P1 Y0
+function ZeroWorkPosYFunc() {
+	if (resetYpos == false) {
+		socket.emit('write', options.port, "G10 L20 P1 Y0;\n");
+        console.log("ZeroWorkPosY");
+        resetYpos = true;
+	}
+}
+// Zero Z Axis - G10 L20 P1 Z0
+function ZeroWorkPosZFunc() {
+	if (resetZpos == false) {
+		socket.emit('write', options.port, "G10 L20 P1 Z0;\n");
+        console.log("ZeroWorkPosZ");
+        resetZpos = true;
+	}
+}
+// Start Spindle - M3
+function SpindleStartFunc() {
+	if (SpindleStart == false) {
+		socket.emit('write', options.port, "M3\n");
+        console.log("SpindleStart - M3");
+        SpindleStart = true;
+	}
+}
+// Stop Spindle - M5
+function SpindleStopFunc() {
+	if (StopSpindle == false) {
+		socket.emit('write', options.port, "M5\n");
+        console.log("StopSpindle - M5");
+        StopSpindle = true;
+	}
+}
+// Go To Zero - G0 X0 Y0
+function GoToZeroFunc() {
+	if (GoToZero == false) {
+        socket.emit('write', options.port, "G53 Z-5\n"); //Move Z to 5mm form homing swithc
+        socket.emit('write', options.port, "G0 X0 Y0\n");
+        socket.emit('write', options.port, "G90\n"); //Go back to Abs mode
+        console.log("Lift Z and Go to Zero X & Y");
+        GoToZero = true;
+	}
+}
+// Feedrate Reset
+function FeedrateRes_Func() {
+	if (FeedrateRes == false && SpindleSelected == true) {
+		socket.emit('write', options.port, "\x99");
+        console.log("Spindle Override Reset");
+        FeedrateRes = true;
+    }
+    else if  (FeedrateRes == false && SpindleSelected == false) {
+        socket.emit('write', options.port, "\x90");
+        console.log("Feedrate Override Reset");
+        FeedrateRes = true;
+    	}
+    }
+
+// Feedrate Inc
+function FeedrateInc_Func() {
+	if (FeedrateInc == false && SpindleSelected == true) {
+		socket.emit('write', options.port, "\x9A");
+        console.log("Spindle Increase");
+        FeedrateInc = true;
+    }
+    else if (FeedrateInc == false && SpindleSelected == false) {
+        socket.emit('write', options.port, "\x91");
+        console.log("Feedrate Increase");
+        FeedrateInc = true;
+        }
+	}
+
+// Feedrate Dec
+function FeedrateDec_Func() {
+	if (FeedrateDec == false && SpindleSelected == true) {
+		socket.emit('write', options.port, "\x9B");
+        console.log("Spindle Decrease");
+        FeedrateDec = true;
+    }
+    else if (FeedrateDec == false && SpindleSelected == false) {
+        socket.emit('write', options.port, "\x92");
+        console.log("Feedrate Decrease");
+        FeedrateDec = true;
+	}
+}
 
 
 var createServer = function(options) {
 
-  // Create Button Interupt
-	button.watch(function (err, state) {
-		// Set Error Catch
-		if (err) {
-			throw err;
-		}
-		// Turn LED ON/OFF based on state
-		led.writeSync(Number(!state));
+// ------------------------------------------------ Read Buttons --------------------------------------------
 
-		// Button Pressed
-		if ( state ) { // button pressed
+	// FeedHold - One button for Feedhold and Cyclestart depending on state
+	Feedhold_btn.watch(function (err, state) {
+		if (state == 1) 
+			FeedHoldEnabled();
+		else
+			FeedHoldDisabled();
+    });	
+    	// Reset X Axis
+	ResetX_btn.watch(function (err, state) {
+		if (state == 1) 
+            ZeroWorkPosXFunc();
+        else
+            resetXpos = false;
+    });	
+        // Reset Y Axis
+	ResetY_btn.watch(function (err, state) {
+		if (state == 1) 
+            ZeroWorkPosYFunc();
+        else
+            resetYpos = false;
+    });	
+    	// Reset Z Axis
+    ResetZ_btn.watch(function (err, state) {
+        if (state == 1) 
+            ZeroWorkPosZFunc();
+        else
+            resetZpos = false;
+    });	
+    	// Start Spindle button
+    SpindleStart_btn.watch(function (err, state) {
+        if (state == 1) 
+            SpindleStartFunc();
+        else
+            SpindleStart = false;
+    });	
+    	// Stop Spindle button
+    SpindleStop_btn.watch(function (err, state) {
+        if (state == 1) 
+          SpindleStopFunc();
+        else
+            StopSpindle = false;
+    });	
+	// Go To Zero Button
+    GoToZero_btn.watch(function (err, state) {
+        if (state == 1) 
+            GoToZeroFunc();
+        else
+            GoToZero = false;
+    });
+	// Feedrate Reset Button
+    FeedrateRes_btn.watch(function (err, state) {
+        if (state == 1) 
+            FeedrateRes_Func();
+        else
+            FeedrateRes = false;
+    });
+	// Feedrate Increase Button
+    FeedrateInc_btn.watch(function (err, state) {
+        if (state == 1) 
+            FeedrateInc_Func();
+        else
+            FeedrateInc = false;
+    });
+	// Feedrate Decrease Button
+    FeedrateDec_btn.watch(function (err, state) {
+        if (state == 1) 
+            FeedrateDec_Func();
+        else
+            FeedrateDec = false;
+    });
+	// Feedrate Selector Button
+    FeedrateSelector.watch(function (err, state) {
+        if (state == 1) 
+            SpindleSelected     = true;
+        else
+            SpindleSelected     = false;
+       });
 
-			// Incremmet Button Pressed Count
-			button_presses++
-
-			// check button count
-			if ( now() - button_pressed_time >= 800 ) {  // x milisecionds between presses time
-				// Reset Press Counter
-				button_presses = 1
-				console.log("Button Count Reset")
-			}
-
-			console.log("Button Count: " + button_presses)
-
-
-			// Kill Old Button Hold Fuction
-			clearTimeout(button_hold_fuction);
-			button_hold_fuction = null;
-
-			// Use a timeout with 1000ms (this would be your X variable)
-			button_hold_fuction = setTimeout(function() {
-				// Compare key down time with key up time
-				if (state && +button_released_time < +button_pressed_time) {
-					// Key has been held down for x seconds
-					console.log("button_hold_fuction: Key has been held down for x seconds")
-					blink(10, 50)
-
-					// Poweroff
-					function puts(error, stdout, stderr) { util.puts(stdout) }
-					exec("sudo poweroff", puts);
-				} else {
-				// Key has not been held down for x seconds
-					console.log("button_hold_fuction: exit, safe timout")
-				}
-			}, 3000);
-
-			// Update Time Pressed
-			button_pressed_time = now()
-			//console.log("button_pressed_time")
-		} else { // button released
-			//console.log("button_presses: " + button_presses)
-
-			// Kill Old Button Presses Fuction
-			clearTimeout(button_presses_fuction)
-			button_presses_fuction = null
-
-			// Update Time Released
-			button_released_time = now()
-			console.log("Button Released: button_released_time - button_pressed_time: " + ( button_released_time - button_pressed_time))
-
-			// Bebounce Protection
-			if ( button_released_time - button_pressed_time < 40 ) {
-				button_presses = 0
-				console.log("Bounce Detected!!!")
-
-			} else {
-
-				// Button Presses Switch
-				switch (button_presses) {
-				case 0:
-					console.log("Button Presses: " + button_presses + " | Eletrical Noise");
-					break;
-				case 1:
-					button_presses_fuction = setTimeout(function() {
-						// Blink LEDS
-						blink(button_presses, 200)
-						console.log("Button Presses: " + button_presses)
-
-						// CNC Command
-						socket.emit('write', options.port, "M9;\n");
-					}, 1000);
-					break;
-				case 2:
-					button_presses_fuction = setTimeout(function() {
-						// Blink LEDS
-						blink(button_presses, 200)
-						console.log("Button Presses: " + button_presses)
-
-						// CNC Command
-						socket.emit('write', options.port, "M7;\n");
-					}, 1000);
-					break;
-				case 3:
-					button_presses_fuction = setTimeout(function() {
-						// Blink LEDS
-						blink(button_presses, 200)
-						console.log("Button Presses: " + button_presses)
-
-						// CNC Command
-						socket.emit('write', options.port, "M8;\n");
-					}, 1000);
-					break;
-				case 4:
-				case 5:
-					button_presses_fuction = setTimeout(function() {
-						// Blink LEDS
-						blink(button_presses, 200)
-						console.log("Button Presses: " + button_presses)
-
-						// CNC Command
-						socket.emit('write', options.port, "$X;\n");
-					}, 1000);
-					break;
-				case 6:
-				case 7:
-					button_presses_fuction = setTimeout(function() {
-						// Blink LEDS
-						blink(button_presses, 200)
-						console.log("Button Presses: " + button_presses)
-
-						// CNC Command
-						socket.emit('write', options.port, "$SLP;\n");
-					}, 1000);
-					break;
-				default:
-					button_presses_fuction = setTimeout(function() {
-						// Blink LEDS
-						blink(8, 150)
-						console.log("Button Presses (or more): " + button_presses)
-
-						// CNC Command
-						socket.emit('write', options.port, "$H;\n");
-					}, 1000);
-				}
-			}
-
-			// Kill Button Hold Fuction
-			clearTimeout(button_hold_fuction);
-			button_hold_fuction = null;
-		}
-
-		//console.log(button_pressed_time.toFixed(3)) // the number of milliseconds the current node process is running
-		//console.log("TEST" + (button_released_time - button_pressed_time).toFixed(3)) // ~ 0.002 on my system
-	});
-
-  // Server Connection
+  // Server Connection, boilerplate code.
   serverMain(options, function(err, socket) {
       // Grbl
       socket.on('Grbl:state', function(state) {
@@ -248,31 +313,10 @@ var createServer = function(options) {
       socket.on('Grbl:settings', function(settings) {
           store.controller.settings = settings;
       });
-
-      // Smoothie
-      socket.on('Smoothie:state', function(state) {
-          store.controller.state = state;
-      });
-      socket.on('Smoothie:settings', function(settings) {
-          store.controller.settings = settings;
-      });
-
-      // TinyG
-      socket.on('TinyG:state', function(state) {
-          store.controller.state = state;
-      });
-      socket.on('TinyG:settings', function(settings) {
-          store.controller.settings = settings;
-      });
-
       // Sender
       socket.on('sender:status', function(data) {
           store.sender.status = data;
       });
-
-		// Turn LED ON
-		led.writeSync(1);  // turn led on
-
     });
 };
 
@@ -304,10 +348,18 @@ serialport.list(function(err, ports) {
 
 // Clean Proccess Kill
 process.on('SIGINT', function () {
-	led.unexport();
-	button.unexport();
-	clearTimeout(button_hold_fuction);
-	button_hold_fuction = null
-	clearTimeout(button_presses_fuction);
-	button_presses_fuction = null
+	
+	buttonLED.unexport();
+    Feedhold_btn.unexport();
+    ResetX_btn.unexport();
+    ResetY_btn.unexport();
+    ResetZ_btn.unexport();
+    SpindleStart_btn.unexport();
+    SpindleStop_btn.unexport();
+    GoToZero_btn.unexport();
+    FeedrateRes_btn.unexport();
+    FeedrateInc_btn.unexport();
+    FeedrateDec_btn.unexport();
+    FeedrateSelector.unexport();
+
 });

@@ -1,5 +1,6 @@
 # cncjs-pendant-raspi-gpio
 Simple Raspberry Pi GPIO Pendant control for CNCjs.
+From GPIO to G-code command.
 
 [![NPM](https://nodei.co/npm/cncjs-pendant-raspi-gpio.png?compact=true)](https://nodei.co/npm/cncjs-pendant-raspi-gpio/)
 
@@ -19,9 +20,9 @@ sudo npm install -g cncjs-pendant-raspi-gpio@latest --unsafe-perm --build-from-s
 ```
 # Clone Repository
 cd ~/
-#wget https://github.com/cncjs/cncjs-pendant-raspi-gpio/archive/master.zip
+#wget https://github.com/NessK/cncjs-pendant-raspi-gpio/archive/master.zip
 #unzip master.zip
-git clone https://github.com/cncjs/cncjs-pendant-raspi-gpio.git
+git clone https://github.com/NessK/cncjs-pendant-raspi-gpio.git
 cd cncjs-pendant-raspi-gpio*
 npm install
 ```
@@ -59,29 +60,3 @@ pm2 save
 # Get list of PM2 processes
 pm2 list
 ```
-
-#### Button Presses
- 1. G-Code: M9
- 2. G-Code: M8
- 3. G-Code: M7
- 4. G-Code: $X "Unlock"
- 5. G-Code: $X "Unlock"
- 6. G-Code: $SLP "Sleep"
- 7. G-Code: $SLP "Sleep"
- 8. G-Code: $H "Home"
-
-#### Press & Hold
- - 3 Sec: sudo poweroff "Shutdown"
-
-## Wiring 
-
-See the [fivdi/onoff](https://www.npmjs.com/package/onoff) Raspberry Pi GPIO NodeJS repository for more infomation.
-![nodejs onoff diagram](https://raw.githubusercontent.com/fivdi/onoff/master/examples/light-switch.png)
-
-![raspberry_pi_circuit_note](http://www.jameco.com/Jameco/workshop/circuitnotes/raspberry_pi_circuit_note_fig2a.jpg)
-
-![image-4](https://github.com/cncjs/cncjs-pendant-raspi-gpio/raw/master/docs/image-4.jpg)
-
-![image-3](https://github.com/cncjs/cncjs-pendant-raspi-gpio/raw/master/docs/image-3.jpg)
-
-![image-2](https://github.com/cncjs/cncjs-pendant-raspi-gpio/raw/master/docs/image-2.jpg)
